@@ -181,9 +181,116 @@ const FlugInfoApp = () => {
     setError(null);
     
     try {
-      console.log('Versuche AviationStack API...');
+      console.log('Versuche OpenSky Network API...');
+      
+      // Düsseldorf Airport Bounding Box (erweitert für bessere Abdeckung)
+      const openSkyResponse = await fetch(
+        'https://opensky-network.org/api/states/all?lamin=51.2&lamax=51.4&lomin=6.6&lomax=6.9',
+        {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' }
+        }
+      );
+
+      if (openSkyResponse.ok) {
+        const data = await openSkyResponse.json();
+        console.log('OpenSky API erfolgreich:', data);
+        
+        if (data && data.states && data.states.length > 0) {
+          // OpenSky State Vector Format:
+          // [icao24, callsign, origin_country, time_position, last_contact, longitude, latitude, baro_altitude, on_ground, velocity, true_track, vertical_rate, sensors, geo_altitude, squawk, spi, position_source]
+          
+          const flights = data.states
+            .filter(state => state[8] === false) // Nur fliegende Flugzeuge (nicht am Boden)
+            .map((state, index) => {
+              const [icao24, callsign, origin_country, time_position, last_contact, longitude, latitude, baro_altitude, on_ground, velocity, true_track] = state;
+              
+              // Bestimme ob es Ankunft oder Abflug ist basierend auf Position und Richtung
+              const isNearDUS = Math.abs(latitude - DUS_LAT) < 0.02 && Math.abs(longitude - DUS_LON) < 0.02;
+              const isApproaching = true_track && ((true_track > 180 && true_track < 360) || (true_track >= 0 && true_track < 90));
+              const isLanding = isApproaching || Math.random() > 0.5; // Fallback zu Zufall wenn Richtung unklar
+              
+              const now = new Date();
+              const flightTime = new Date(now.getTime() + (Math.random() * 2 - 1) * 3600000); // ±1 Stunde Variation
+              
+              // Airline aus Callsign ableiten
+              const getAirlineFromCallsign = (call) => {
+                if (!call) return 'Unbekannte Airline';
+                const prefix = call.substring(0, 3).toUpperCase();
+                const airlines = {
+                  'DLH': 'Lufthansa', 'EWG': 'Eurowings', 'AFR': 'Air France',
+                  'KLM': 'KLM', 'THY': 'Turkish Airlines', 'UAE': 'Emirates',
+                  'BAW': 'British Airways', 'AZA': 'Alitalia', 'AUA': 'Austrian Airlines',
+                  'LOT': 'LOT Polish Airlines', 'SWR': 'Swiss International',
+                  'AFL': 'Aeroflot', 'UAL': 'United Airlines', 'QTR': 'Qatar Airways'
+                };
+                return airlines[prefix] || `${prefix} Airlines`;
+              };
+
+              // Gate generierung
+              const gates = ['A03', 'A06', 'A08', 'A12', 'A15', 'A18', 'B03', 'B07', 'B09', 'B12', 'C03', 'C06'];
+              const gate = gates[Math.floor(Math.random() * gates.length)];
+              
+              // Status basierend auf Höhe und Position
+              let status, statusColor;
+              const altitude = baro_altitude || 0;
+              
+              if (altitude < 1000 && isNearDUS) {
+                status = isLanding ? 'Landung' : 'Start';
+                statusColor = 'text-green-600';
+              } else if (altitude < 3000) {
+                status = isLanding ? 'Im Anflug' : 'Steigflug';
+                statusColor = 'text-yellow-600';
+              } else {
+                status = 'Reiseflug';
+                statusColor = 'text-blue-600';
+              }
+
+              return {
+                id: `OPENSKY_${icao24}_${Date.now()}`,
+                flugnummer: callsign?.trim() || `${icao24.toUpperCase()}`,
+                airline: getAirlineFromCallsign(callsign),
+                herkunft: isLanding ? (origin_country || 'Unbekannt') : null,
+                herkunftCode: isLanding ? 'INT' : null,
+                zielort: !isLanding ? (origin_country || 'Unbekannt') : null,
+                zielCode: !isLanding ? 'INT' : null,
+                ankunft: isLanding ? flightTime.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : null,
+                abflug: !isLanding ? flightTime.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : null,
+                gate,
+                status,
+                statusColor,
+                aircraft: 'A320', // Standard-Flugzeugtyp da nicht in OpenSky verfügbar
+                isLanding,
+                land: origin_country || 'Unbekannt',
+                passagiere: Math.floor(Math.random() * 250) + 50,
+                terminal: gate.charAt(0),
+                altitude: Math.round(altitude || 0),
+                velocity: Math.round(velocity || 0),
+                latitude: latitude,
+                longitude: longitude
+              };
+            })
+            .slice(0, 30); // Begrenze auf 30 Flüge für bessere Performance
+
+          if (flights.length > 0) {
+            setRealFlights(flights);
+            setLastUpdate(new Date());
+            setError(null);
+            setDataSource('OpenSky Network API');
+            setLoading(false);
+            return;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('OpenSky API fehlgeschlagen:', error);
+    }
+
+    // Fallback zu AviationStack Demo API
+    try {
+      console.log('Versuche AviationStack Demo API...');
       const aviationStackResponse = await fetch(
-        'https://api.aviationstack.com/v1/flights?access_key=demo&dep_iata=DUS&limit=50',
+        'https://api.aviationstack.com/v1/flights?access_key=demo&dep_iata=DUS&limit=20',
         {
           method: 'GET',
           headers: { 'Accept': 'application/json' }
@@ -192,7 +299,7 @@ const FlugInfoApp = () => {
 
       if (aviationStackResponse.ok) {
         const data = await aviationStackResponse.json();
-        console.log('AviationStack API erfolgreich:', data);
+        console.log('AviationStack Demo API:', data);
         
         if (data && data.data && data.data.length > 0) {
           const flights = data.data.map(flight => {
@@ -224,18 +331,21 @@ const FlugInfoApp = () => {
             };
           }).filter(flight => flight.isLanding !== null);
 
-          setRealFlights(flights);
-          setLastUpdate(new Date());
-          setError(null);
-          setDataSource('AviationStack API');
-          setLoading(false);
-          return;
+          if (flights.length > 0) {
+            setRealFlights(flights);
+            setLastUpdate(new Date());
+            setError('OpenSky nicht verfügbar - Verwende AviationStack Demo');
+            setDataSource('AviationStack Demo API');
+            setLoading(false);
+            return;
+          }
         }
       }
     } catch (error) {
-      console.warn('AviationStack API fehlgeschlagen:', error);
+      console.warn('AviationStack Demo API fehlgeschlagen:', error);
     }
 
+    // Fallback zu intelligenten Mock-Daten
     console.log('Verwende intelligentes Mock-System...');
     setRealFlights(getIntelligentMockData());
     setLastUpdate(new Date());
@@ -246,6 +356,8 @@ const FlugInfoApp = () => {
 
   useEffect(() => {
     fetchRealFlightData();
+    // OpenSky API hat Rate-Limiting: 10 Sekunden für nicht-authentifizierte Requests
+    // Wir verwenden 30 Sekunden für bessere Stabilität
     const interval = setInterval(fetchRealFlightData, 30000);
     setSelectedAirports(new Set(Object.keys(DEFAULT_SICHTKONTROLL_AIRPORTS)));
     return () => clearInterval(interval);
@@ -443,9 +555,29 @@ const FlugInfoApp = () => {
 
         {activeTab === 'sichtkontrollen' && flug.passagiere && (
           <div className="pt-1 border-t border-gray-100">
-            <div className="text-xs">
-              <span className="text-gray-500">Passagiere: </span>
-              <span className="font-semibold text-gray-800">👥 {flug.passagiere}</span>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-gray-500">Passagiere: </span>
+                <span className="font-semibold text-gray-800">👥 {flug.passagiere}</span>
+              </div>
+              {flug.altitude && (
+                <div>
+                  <span className="text-gray-500">Höhe: </span>
+                  <span className="font-semibold text-gray-800">✈️ {flug.altitude}m</span>
+                </div>
+              )}
+              {flug.velocity && (
+                <div>
+                  <span className="text-gray-500">Speed: </span>
+                  <span className="font-semibold text-gray-800">🚀 {flug.velocity} km/h</span>
+                </div>
+              )}
+              {(flug.latitude && flug.longitude) && (
+                <div>
+                  <span className="text-gray-500">Position: </span>
+                  <span className="font-semibold text-gray-800 text-xs">📍 {flug.latitude?.toFixed(3)}, {flug.longitude?.toFixed(3)}</span>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -520,15 +652,20 @@ const FlugInfoApp = () => {
           {/* Status Indicator */}
           <div className="mt-2 flex items-center justify-between text-xs">
             <div className="flex items-center space-x-2">
-              {error ? (
+              {error && !error.includes('OpenSky') ? (
                 <WifiOff className="w-3 h-3 text-red-300" />
               ) : (
                 <Wifi className="w-3 h-3 text-green-300" />
               )}
               <span className="text-blue-100">
-                {loading ? 'Lädt...' : error ? 'Offline' : 'Live'}
+                {loading ? 'Lädt...' : error && !error.includes('Demo') && !error.includes('OpenSky') ? 'Offline' : 'Live'}
               </span>
-              <span className="px-1.5 py-0.5 bg-blue-700 rounded-full text-xs">
+              <span className={`px-1.5 py-0.5 rounded-full text-xs ${
+                dataSource === 'OpenSky Network API' ? 'bg-green-700 text-green-100' :
+                dataSource === 'AviationStack Demo API' ? 'bg-orange-700 text-orange-100' :
+                dataSource === 'AviationStack API' ? 'bg-blue-700 text-blue-100' :
+                'bg-gray-700 text-gray-100'
+              }`}>
                 {dataSource}
               </span>
             </div>
