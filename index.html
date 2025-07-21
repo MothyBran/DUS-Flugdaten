@@ -1,0 +1,696 @@
+import React, { useState, useMemo, useEffect } from 'react';
+import { Plane, Star, StarOff, Search, Clock, MapPin, Info, RefreshCw, Wifi, WifiOff, Filter, X, ChevronDown, ChevronUp } from 'lucide-react';
+
+const FlugInfoApp = () => {
+  const [activeTab, setActiveTab] = useState('abflüge');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [favorites, setFavorites] = useState([]);
+  const [bemerkungen, setBemerkungen] = useState({});
+  const [realFlights, setRealFlights] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const [error, setError] = useState(null);
+  const [selectedFlightsForControl, setSelectedFlightsForControl] = useState(new Set());
+  const [selectedAirports, setSelectedAirports] = useState(new Set());
+  const [dataSource, setDataSource] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+
+  // Düsseldorf Airport Koordinaten
+  const DUS_LAT = 51.2895;
+  const DUS_LON = 6.7668;
+  const RADIUS = 0.05;
+
+  // Flughäfen für Sichtkontrollen (IATA-Codes) - vorausgewählt
+  const DEFAULT_SICHTKONTROLL_AIRPORTS = {
+    'ATH': 'Athen', 'SKG': 'Thessaloniki', 'HER': 'Heraklion', 'RHO': 'Rhodos',
+    'MAD': 'Madrid', 'BCN': 'Barcelona', 'PMI': 'Palma', 'AGP': 'Málaga',
+    'LPA': 'Las Palmas', 'VLC': 'Valencia',
+    'FCO': 'Rom Fiumicino', 'MXP': 'Mailand Malpensa', 'NAP': 'Neapel',
+    'VCE': 'Venedig', 'BLQ': 'Bologna', 'CTA': 'Catania',
+    'CDG': 'Paris CDG', 'ORY': 'Paris Orly', 'NCE': 'Nizza',
+    'LYS': 'Lyon', 'MRS': 'Marseille',
+    'LIS': 'Lissabon', 'OPO': 'Porto', 'FAO': 'Faro',
+    'WAW': 'Warschau', 'KRK': 'Krakau', 'GDN': 'Danzig'
+  };
+
+  // Non-Schengen Länder für Markierung
+  const NON_SCHENGEN_COUNTRIES = [
+    'United States', 'Canada', 'United Kingdom', 'Turkey', 'Russia', 
+    'China', 'Japan', 'India', 'Thailand', 'United Arab Emirates',
+    'Qatar', 'Kuwait', 'Saudi Arabia', 'Egypt', 'Morocco', 'Tunisia',
+    'Serbia', 'Bosnia and Herzegovina', 'North Macedonia', 'Albania',
+    'Ukraine', 'Belarus', 'Moldova'
+  ];
+
+  const getIntelligentMockData = () => {
+    const now = new Date();
+    const baseFlights = [
+      { airline: 'Lufthansa', route: 'FRA-DUS', aircraft: 'A319', country: 'Germany' },
+      { airline: 'Eurowings', route: 'BCN-DUS', aircraft: 'A320', country: 'Spain' },
+      { airline: 'Air France', route: 'CDG-DUS', aircraft: 'A321', country: 'France' },
+      { airline: 'KLM', route: 'AMS-DUS', aircraft: 'B737', country: 'Netherlands' },
+      { airline: 'Turkish Airlines', route: 'IST-DUS', aircraft: 'A330', country: 'Turkey' },
+      { airline: 'Emirates', route: 'DXB-DUS', aircraft: 'B777', country: 'United Arab Emirates' },
+      { airline: 'British Airways', route: 'LHR-DUS', aircraft: 'A320', country: 'United Kingdom' },
+      { airline: 'Alitalia', route: 'FCO-DUS', aircraft: 'A319', country: 'Italy' },
+      { airline: 'Austrian Airlines', route: 'VIE-DUS', aircraft: 'A320', country: 'Austria' },
+      { airline: 'LOT Polish Airlines', route: 'WAW-DUS', aircraft: 'B737', country: 'Poland' },
+      { airline: 'Swiss International', route: 'ZUR-DUS', aircraft: 'A220', country: 'Switzerland' },
+      { airline: 'Aeroflot', route: 'SVO-DUS', aircraft: 'A321', country: 'Russia' },
+      { airline: 'United Airlines', route: 'EWR-DUS', aircraft: 'B767', country: 'United States' },
+      { airline: 'Qatar Airways', route: 'DOH-DUS', aircraft: 'A350', country: 'Qatar' },
+      { airline: 'Iberia', route: 'MAD-DUS', aircraft: 'A321', country: 'Spain' },
+      { airline: 'SAS', route: 'CPH-DUS', aircraft: 'A320', country: 'Denmark' },
+      { airline: 'Pegasus Airlines', route: 'SAW-DUS', aircraft: 'A320', country: 'Turkey' },
+      { airline: 'TAP Portugal', route: 'LIS-DUS', aircraft: 'A321', country: 'Portugal' },
+      { airline: 'Air Serbia', route: 'BEG-DUS', aircraft: 'A319', country: 'Serbia' },
+      { airline: 'Aegean Airlines', route: 'ATH-DUS', aircraft: 'A320', country: 'Greece' }
+    ];
+
+    const getAirportName = (code) => {
+      const airports = {
+        'FRA': 'Frankfurt', 'BCN': 'Barcelona', 'CDG': 'Paris CDG', 'AMS': 'Amsterdam',
+        'IST': 'Istanbul', 'DXB': 'Dubai', 'LHR': 'London Heathrow', 'FCO': 'Rom Fiumicino',
+        'VIE': 'Wien', 'WAW': 'Warschau', 'ZUR': 'Zürich', 'SVO': 'Moskau',
+        'EWR': 'New York Newark', 'DOH': 'Doha', 'MAD': 'Madrid', 'CPH': 'Kopenhagen',
+        'SAW': 'Istanbul Sabiha', 'LIS': 'Lissabon', 'BEG': 'Belgrad', 'ATH': 'Athen'
+      };
+      return airports[code] || code;
+    };
+
+    const getPassengerCount = (aircraft) => {
+      const capacity = {
+        'A319': 140, 'A320': 160, 'A321': 200, 'A330': 280, 'A350': 350,
+        'B737': 150, 'B767': 250, 'B777': 350, 'A220': 130
+      };
+      const maxCapacity = capacity[aircraft] || 180;
+      return Math.floor(maxCapacity * (0.6 + Math.random() * 0.4));
+    };
+
+    return baseFlights.map((base, index) => {
+      const [origin, dest] = base.route.split('-');
+      const isArrival = Math.random() > 0.4;
+      
+      const hour = now.getHours();
+      let timeOffset;
+      if (hour < 6) timeOffset = Math.random() * 180;
+      else if (hour < 12) timeOffset = Math.random() * 240;
+      else if (hour < 18) timeOffset = Math.random() * 180;
+      else timeOffset = Math.random() * 120;
+      
+      const flightTime = new Date(now.getTime() + (timeOffset - 60) * 60000);
+      
+      const flightNumbers = {
+        'Lufthansa': 'LH ' + (1000 + index * 12),
+        'Eurowings': 'EW ' + (3000 + index * 15),
+        'Air France': 'AF ' + (1400 + index * 8),
+        'KLM': 'KL ' + (1800 + index * 6),
+        'Turkish Airlines': 'TK ' + (1500 + index * 10),
+        'Emirates': 'EK ' + (40 + index * 2),
+        'British Airways': 'BA ' + (900 + index * 5),
+        'Alitalia': 'AZ ' + (100 + index * 3),
+        'Austrian Airlines': 'OS ' + (110 + index * 4),
+        'LOT Polish Airlines': 'LO ' + (3900 + index * 7)
+      };
+      
+      const gatesByTerminal = {
+        'A': ['A03', 'A06', 'A08', 'A12', 'A15', 'A18', 'A22', 'A26', 'A28'],
+        'B': ['B03', 'B07', 'B09', 'B12', 'B15', 'B18', 'B21', 'B24'],
+        'C': ['C03', 'C06', 'C08', 'C12', 'C15', 'C18', 'C21']
+      };
+      const terminal = ['A', 'B', 'C'][index % 3];
+      const gate = gatesByTerminal[terminal][Math.floor(Math.random() * gatesByTerminal[terminal].length)];
+      
+      const minutesUntilFlight = (flightTime.getTime() - now.getTime()) / (1000 * 60);
+      let status, statusColor;
+      
+      if (minutesUntilFlight < -30) {
+        status = isArrival ? 'Gelandet' : 'Abgeflogen';
+        statusColor = 'text-green-600';
+      } else if (minutesUntilFlight < -10) {
+        status = isArrival ? 'Ankunft' : 'Boarding beendet';
+        statusColor = 'text-blue-600';
+      } else if (minutesUntilFlight < 0) {
+        status = isArrival ? 'Im Anflug' : 'Boarding';
+        statusColor = 'text-yellow-600';
+      } else if (minutesUntilFlight < 30) {
+        status = isArrival ? 'Erwartet' : 'Check-in';
+        statusColor = 'text-blue-600';
+      } else {
+        status = 'Geplant';
+        statusColor = 'text-gray-600';
+      }
+
+      if (Math.random() < 0.15) {
+        status = 'Verspätet';
+        statusColor = 'text-red-600';
+      }
+
+      const flightObj = {
+        id: 'MOCK_' + index + '_' + Date.now(),
+        flugnummer: flightNumbers[base.airline] || (base.airline.substring(0, 2).toUpperCase() + ' ' + (1000 + index)),
+        airline: base.airline,
+        gate,
+        status,
+        statusColor,
+        aircraft: base.aircraft,
+        isLanding: isArrival,
+        land: base.country,
+        passagiere: getPassengerCount(base.aircraft),
+        terminal: terminal,
+        delay: Math.random() < 0.15 ? Math.floor(Math.random() * 45) + 5 : null
+      };
+
+      if (isArrival) {
+        flightObj.herkunft = getAirportName(origin);
+        flightObj.herkunftCode = origin;
+        flightObj.ankunft = flightTime.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      } else {
+        flightObj.zielort = getAirportName(origin);
+        flightObj.zielCode = origin;
+        flightObj.abflug = flightTime.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      }
+
+      return flightObj;
+    });
+  };
+
+  const fetchRealFlightData = async () => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      console.log('Versuche AviationStack API...');
+      const aviationStackResponse = await fetch(
+        'https://api.aviationstack.com/v1/flights?access_key=demo&dep_iata=DUS&limit=50',
+        {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' }
+        }
+      );
+
+      if (aviationStackResponse.ok) {
+        const data = await aviationStackResponse.json();
+        console.log('AviationStack API erfolgreich:', data);
+        
+        if (data && data.data && data.data.length > 0) {
+          const flights = data.data.map(flight => {
+            const isDeparture = flight.departure?.iata === 'DUS' || flight.departure?.icao === 'EDDL';
+            const isArrival = flight.arrival?.iata === 'DUS' || flight.arrival?.icao === 'EDDL';
+            
+            return {
+              id: flight.flight?.iata || flight.flight?.icao || Math.random().toString(36),
+              flugnummer: flight.flight?.iata || flight.flight?.icao || 'N/A',
+              airline: flight.airline?.name || 'Unbekannt',
+              herkunft: isArrival ? flight.departure?.airport : null,
+              herkunftCode: isArrival ? (flight.departure?.iata || flight.departure?.icao) : null,
+              zielort: isDeparture ? flight.arrival?.airport : null, 
+              zielCode: isDeparture ? (flight.arrival?.iata || flight.arrival?.icao) : null,
+              ankunft: isArrival && flight.arrival?.scheduled ? new Date(flight.arrival.scheduled).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : null,
+              abflug: isDeparture && flight.departure?.scheduled ? new Date(flight.departure.scheduled).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }) : null,
+              gate: flight.departure?.gate || flight.arrival?.gate || (['A', 'B', 'C'][Math.floor(Math.random() * 3)] + String(Math.floor(Math.random() * 30) + 1).padStart(2, '0')),
+              status: flight.flight_status === 'scheduled' ? 'Geplant' : 
+                     flight.flight_status === 'active' ? 'Aktiv' :
+                     flight.flight_status === 'landed' ? 'Gelandet' : 
+                     flight.flight_status === 'cancelled' ? 'Storniert' : 'Unbekannt',
+              statusColor: flight.flight_status === 'scheduled' ? 'text-blue-600' :
+                          flight.flight_status === 'active' ? 'text-green-600' :
+                          flight.flight_status === 'landed' ? 'text-green-600' :
+                          flight.flight_status === 'cancelled' ? 'text-red-600' : 'text-gray-600',
+              isLanding: isArrival,
+              land: isDeparture ? flight.arrival?.country : flight.departure?.country || 'Unbekannt',
+              passagiere: Math.floor(Math.random() * 300) + 50
+            };
+          }).filter(flight => flight.isLanding !== null);
+
+          setRealFlights(flights);
+          setLastUpdate(new Date());
+          setError(null);
+          setDataSource('AviationStack API');
+          setLoading(false);
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn('AviationStack API fehlgeschlagen:', error);
+    }
+
+    console.log('Verwende intelligentes Mock-System...');
+    setRealFlights(getIntelligentMockData());
+    setLastUpdate(new Date());
+    setError('APIs nicht verfügbar - Verwende Simulationsdaten');
+    setDataSource('Intelligente Simulation');
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchRealFlightData();
+    const interval = setInterval(fetchRealFlightData, 30000);
+    setSelectedAirports(new Set(Object.keys(DEFAULT_SICHTKONTROLL_AIRPORTS)));
+    return () => clearInterval(interval);
+  }, []);
+
+  const toggleFavorite = (flugId) => {
+    setFavorites(prev => 
+      prev.includes(flugId) 
+        ? prev.filter(id => id !== flugId)
+        : [...prev, flugId]
+    );
+  };
+
+  const isFavorite = (flugId) => favorites.includes(flugId);
+
+  const updateBemerkung = (flugId, bemerkung) => {
+    setBemerkungen(prev => ({
+      ...prev,
+      [flugId]: bemerkung
+    }));
+  };
+
+  const getBemerkung = (flugId) => bemerkungen[flugId] || '';
+
+  const toggleFlightForControl = (flugId) => {
+    setSelectedFlightsForControl(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(flugId)) {
+        newSet.delete(flugId);
+      } else {
+        newSet.add(flugId);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleAirportForControl = (airportCode) => {
+    setSelectedAirports(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(airportCode)) {
+        newSet.delete(airportCode);
+      } else {
+        newSet.add(airportCode);
+      }
+      return newSet;
+    });
+  };
+
+  const getArrivingFlights = () => {
+    return realFlights.filter(flight => 
+      flight.isLanding && 
+      (flight.gate?.startsWith('A') || flight.gate?.startsWith('B'))
+    );
+  };
+
+  const isNonSchengenCountry = (country) => {
+    return NON_SCHENGEN_COUNTRIES.includes(country);
+  };
+
+  const getAllAirportsFromFlights = () => {
+    const airports = new Map();
+    realFlights.forEach(flight => {
+      if (flight.herkunftCode && flight.herkunft) {
+        airports.set(flight.herkunftCode, flight.herkunft);
+      }
+      if (flight.zielCode && flight.zielort) {
+        airports.set(flight.zielCode, flight.zielort);
+      }
+    });
+    return airports;
+  };
+
+  const filteredFlights = useMemo(() => {
+    if (!realFlights.length) return [];
+    
+    let flights = [];
+    
+    if (activeTab === 'abflüge') {
+      flights = realFlights.filter(flight => !flight.isLanding);
+    } else if (activeTab === 'ankünfte') {
+      flights = realFlights.filter(flight => flight.isLanding);
+    } else if (activeTab === 'sichtkontrollen') {
+      const airportSelectedFlights = realFlights.filter(flight => 
+        flight.isLanding && 
+        flight.herkunftCode &&
+        selectedAirports.has(flight.herkunftCode) &&
+        (flight.gate?.startsWith('A') || flight.gate?.startsWith('B'))
+      );
+      
+      const manuallySelectedFlights = realFlights.filter(flight =>
+        selectedFlightsForControl.has(flight.id)
+      );
+      
+      const combinedFlights = [...airportSelectedFlights];
+      manuallySelectedFlights.forEach(flight => {
+        if (!combinedFlights.find(f => f.id === flight.id)) {
+          combinedFlights.push(flight);
+        }
+      });
+      
+      flights = combinedFlights;
+    } else if (activeTab === 'favoriten') {
+      flights = realFlights.filter(flight => favorites.includes(flight.id));
+    }
+    
+    if (!searchTerm) return flights;
+    
+    return flights.filter(flight => 
+      flight.flugnummer.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (flight.zielort && flight.zielort.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (flight.herkunft && flight.herkunft.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (flight.zielCode && flight.zielCode.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (flight.herkunftCode && flight.herkunftCode.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      flight.airline.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (flight.land && flight.land.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+  }, [activeTab, searchTerm, favorites, realFlights, selectedFlightsForControl, selectedAirports]);
+
+  // Mobile-optimierte Flugkarte
+  const FlugKarte = ({ flug }) => (
+    <div className="bg-white rounded-lg shadow-sm border border-gray-200 mb-3 p-3">
+      <div className="flex justify-between items-start mb-2">
+        <div className="flex items-center space-x-2">
+          <div className="bg-blue-100 p-1.5 rounded-full">
+            <Plane className="w-4 h-4 text-blue-600" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center space-x-2">
+              <h3 className="font-bold text-base text-gray-800 truncate">{flug.flugnummer}</h3>
+              {flug.land && isNonSchengenCountry(flug.land) && (
+                <span className="px-1.5 py-0.5 bg-red-100 text-red-700 text-xs font-medium rounded-full whitespace-nowrap">
+                  Non-Schengen
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 truncate">{flug.airline}</p>
+          </div>
+        </div>
+        <button
+          onClick={() => toggleFavorite(flug.id)}
+          className="p-1.5 rounded-full hover:bg-gray-100 transition-colors flex-shrink-0"
+        >
+          {isFavorite(flug.id) ? 
+            <Star className="w-4 h-4 text-yellow-500 fill-current" /> : 
+            <StarOff className="w-4 h-4 text-gray-400" />
+          }
+        </button>
+      </div>
+
+      {/* Mobile-optimierte Flugdetails */}
+      <div className="space-y-2">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center space-x-1.5">
+            <MapPin className="w-3.5 h-3.5 text-gray-400" />
+            <div>
+              <p className="text-xs text-gray-500">
+                {flug.isLanding ? 'Von' : 'Nach'}
+              </p>
+              <p className="font-semibold text-sm text-gray-800 truncate">
+                {flug.zielort || flug.herkunft || flug.land}
+              </p>
+              <p className="text-xs text-gray-500">
+                {flug.zielCode || flug.herkunftCode}
+              </p>
+            </div>
+          </div>
+          
+          <div className="text-right">
+            <div className="flex items-center space-x-1.5 justify-end">
+              <Clock className="w-3.5 h-3.5 text-gray-400" />
+              <div>
+                <p className="text-xs text-gray-500">
+                  {flug.isLanding ? 'Ankunft' : 'Abflug'}
+                </p>
+                <p className="font-bold text-sm text-gray-800">
+                  {flug.abflug || flug.ankunft}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-between items-center pt-1 border-t border-gray-100">
+          <div className="text-xs">
+            <span className="text-gray-500">Gate: </span>
+            <span className="font-semibold text-gray-800">{flug.gate}</span>
+          </div>
+          
+          <div className="text-xs">
+            <span className={'font-semibold ' + flug.statusColor}>
+              {flug.status}
+            </span>
+          </div>
+        </div>
+
+        {activeTab === 'sichtkontrollen' && flug.passagiere && (
+          <div className="pt-1 border-t border-gray-100">
+            <div className="text-xs">
+              <span className="text-gray-500">Passagiere: </span>
+              <span className="font-semibold text-gray-800">👥 {flug.passagiere}</span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {activeTab === 'sichtkontrollen' && (
+        <div className="mt-3 pt-3 border-t border-gray-200">
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Bemerkungen zur Sichtkontrolle:
+          </label>
+          <textarea
+            value={getBemerkung(flug.id)}
+            onChange={(e) => updateBemerkung(flug.id, e.target.value)}
+            placeholder="Bemerkungen eingeben..."
+            className="w-full p-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+            rows="2"
+          />
+        </div>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Mobile Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-blue-800 text-white shadow-lg sticky top-0 z-50">
+        <div className="px-4 py-3">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-xl font-bold">Düsseldorf Flughafen</h1>
+              <p className="text-xs text-blue-100">Live Flugdaten</p>
+            </div>
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => setShowSearch(!showSearch)}
+                className="p-2 bg-blue-500 hover:bg-blue-400 rounded-lg transition-colors"
+              >
+                <Search className="w-4 h-4" />
+              </button>
+              <button
+                onClick={fetchRealFlightData}
+                disabled={loading}
+                className="p-2 bg-blue-500 hover:bg-blue-400 disabled:bg-blue-700 rounded-lg transition-colors"
+              >
+                <RefreshCw className={loading ? 'w-4 h-4 animate-spin' : 'w-4 h-4'} />
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile Search */}
+          {showSearch && (
+            <div className="mt-3">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-blue-300" />
+                <input
+                  type="text"
+                  placeholder="Flug suchen..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 text-sm bg-blue-700 text-white placeholder-blue-300 border border-blue-500 rounded-lg focus:ring-2 focus:ring-white focus:border-transparent"
+                />
+                <button
+                  onClick={() => setShowSearch(false)}
+                  className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1"
+                >
+                  <X className="w-4 h-4 text-blue-300" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Status Indicator */}
+          <div className="mt-2 flex items-center justify-between text-xs">
+            <div className="flex items-center space-x-2">
+              {error ? (
+                <WifiOff className="w-3 h-3 text-red-300" />
+              ) : (
+                <Wifi className="w-3 h-3 text-green-300" />
+              )}
+              <span className="text-blue-100">
+                {loading ? 'Lädt...' : error ? 'Offline' : 'Live'}
+              </span>
+              <span className="px-1.5 py-0.5 bg-blue-700 rounded-full text-xs">
+                {dataSource}
+              </span>
+            </div>
+            {lastUpdate && (
+              <span className="text-blue-200">
+                {lastUpdate.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Mobile Tabs */}
+        <div className="px-2 pb-2">
+          <div className="flex space-x-1">
+            {[
+              { key: 'abflüge', label: 'Abflüge', icon: '✈️' },
+              { key: 'ankünfte', label: 'Ankünfte', icon: '🛬' },
+              { key: 'sichtkontrollen', label: 'Kontrollen', icon: '🛂' },
+              { key: 'favoriten', label: 'Favoriten', icon: '⭐' }
+            ].map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                className={'flex-1 py-2 px-2 rounded-md text-xs font-medium transition-colors ' + (
+                  activeTab === tab.key
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-blue-100 hover:text-white hover:bg-blue-700'
+                )}
+              >
+                <div className="flex flex-col items-center space-y-0.5">
+                  <span>{tab.icon}</span>
+                  <span className="truncate">{tab.label}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="px-3 py-4">
+        {/* Sichtkontrollen Filter */}
+        {activeTab === 'sichtkontrollen' && (
+          <div className="mb-4">
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className="w-full flex justify-between items-center p-3 bg-orange-50 border border-orange-200 rounded-lg"
+            >
+              <div className="text-left">
+                <div className="font-semibold text-orange-800 text-sm">🛂 Sichtkontrollen</div>
+                <div className="text-xs text-orange-600">
+                  {selectedAirports.size} Flughäfen • {selectedFlightsForControl.size} Zusatz-Flüge
+                </div>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Filter className="w-4 h-4 text-orange-600" />
+                {showFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </div>
+            </button>
+
+            {showFilters && (
+              <div className="mt-3 space-y-3">
+                {/* Standard Airports */}
+                <div className="p-3 bg-orange-50 border border-orange-200 rounded-lg">
+                  <h4 className="font-medium text-orange-800 text-sm mb-2">📍 Standard-Flughäfen</h4>
+                  <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
+                    {Object.entries(DEFAULT_SICHTKONTROLL_AIRPORTS).map(([code, name]) => (
+                      <label key={code} className="flex items-center space-x-2 p-1.5 hover:bg-orange-100 rounded cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedAirports.has(code)}
+                          onChange={() => toggleAirportForControl(code)}
+                          className="w-3 h-3 text-orange-600 rounded"
+                        />
+                        <div className="text-xs min-w-0 flex-1">
+                          <div className="font-medium text-gray-900 truncate">{code}</div>
+                          <div className="text-gray-600 truncate">{name}</div>
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Individual Flights */}
+                {getArrivingFlights().length > 0 && (
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                    <h4 className="font-medium text-green-800 text-sm mb-2">✈️ Einzelflüge</h4>
+                    <div className="space-y-2 max-h-32 overflow-y-auto">
+                      {getArrivingFlights().slice(0, 8).map(flight => (
+                        <label key={flight.id} className="flex items-center space-x-2 p-1.5 hover:bg-green-100 rounded cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedFlightsForControl.has(flight.id)}
+                            onChange={() => toggleFlightForControl(flight.id)}
+                            className="w-3 h-3 text-green-600 rounded"
+                          />
+                          <div className="text-xs min-w-0 flex-1">
+                            <div className="flex items-center space-x-1">
+                              <span className="font-medium text-gray-900">{flight.flugnummer}</span>
+                              {flight.land && isNonSchengenCountry(flight.land) && (
+                                <span className="px-1 py-0.5 bg-red-100 text-red-600 text-xs rounded-full">NS</span>
+                              )}
+                            </div>
+                            <div className="text-gray-600 truncate">
+                              {flight.herkunft} • Gate {flight.gate}
+                            </div>
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Flight List */}
+        {loading && !realFlights.length ? (
+          <div className="text-center py-12">
+            <RefreshCw className="w-8 h-8 mx-auto mb-4 animate-spin text-blue-500" />
+            <p className="text-sm text-gray-600">Lade Flugdaten...</p>
+          </div>
+        ) : filteredFlights.length > 0 ? (
+          <div>
+            {filteredFlights.map(flug => (
+              <FlugKarte key={flug.id} flug={flug} />
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <div className="text-gray-400 mb-4">
+              <Plane className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p className="text-base">
+                {activeTab === 'favoriten' && favorites.length === 0
+                  ? 'Keine Favoriten'
+                  : searchTerm
+                  ? 'Keine Flüge gefunden'
+                  : 'Keine Flüge verfügbar'
+                }
+              </p>
+              {searchTerm && (
+                <p className="text-sm mt-2">
+                  Versuchen Sie einen anderen Suchbegriff
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Mobile Footer */}
+        <div className="mt-8 pt-4 border-t border-gray-200 text-center text-gray-500">
+          <p className="text-xs">
+            Flughafen Düsseldorf (DUS)
+          </p>
+          <p className="text-xs mt-1">
+            Quelle: <span className="font-medium">{dataSource || 'Lädt...'}</span>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default FlugInfoApp;
