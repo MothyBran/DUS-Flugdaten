@@ -66,10 +66,25 @@
         debugLog('App wird initialisiert...');
 
         const { useState, useMemo, useEffect, useCallback } = React;
-        const { 
-            Plane, Star, Search, Clock, MapPin, RefreshCw, Wifi, WifiOff, 
-            Users, AlertCircle, Filter, ChevronDown, ChevronUp, X, CheckCircle, Signal, Globe
-        } = lucide;
+        
+        // Lucide Icons korrekt laden
+        const Plane = lucide.Plane;
+        const Star = lucide.Star;
+        const Search = lucide.Search;
+        const Clock = lucide.Clock;
+        const MapPin = lucide.MapPin;
+        const RefreshCw = lucide.RefreshCw;
+        const Wifi = lucide.Wifi;
+        const WifiOff = lucide.WifiOff;
+        const Users = lucide.Users;
+        const AlertCircle = lucide.AlertCircle;
+        const Filter = lucide.Filter;
+        const ChevronDown = lucide.ChevronDown;
+        const ChevronUp = lucide.ChevronUp;
+        const X = lucide.X;
+        const CheckCircle = lucide.CheckCircle;
+        const Signal = lucide.Signal;
+        const Globe = lucide.Globe;
 
         // Mock-Daten für Demo/Fallback
         const generateMockFlights = () => {
